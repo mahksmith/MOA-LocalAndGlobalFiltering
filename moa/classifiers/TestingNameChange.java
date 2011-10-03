@@ -12,8 +12,8 @@ public class TestingNameChange extends AbstractClassifier {
 	private static final long serialVersionUID = 1L;
 
 	public IntOption gracePeriodOption = new IntOption("gracePeriod", 'g',
-			"The number of instances to observe between model changes.",
-			1000, 0, Integer.MAX_VALUE);
+			"The number of instances to observe between model changes.", 1000,
+			0, Integer.MAX_VALUE);
 
 	public FlagOption binarySplitsOption = new FlagOption("binarySplits", 'b',
 			"Only allow binary splits.");
@@ -44,23 +44,22 @@ public class TestingNameChange extends AbstractClassifier {
 
 	@Override
 	public void trainOnInstanceImpl(Instance inst) {
-		this.observedClassDistribution.addToValue((int) inst.classValue(), inst
-				.weight());
+		this.observedClassDistribution.addToValue((int) inst.classValue(),
+				inst.weight());
 		for (int i = 0; i < inst.numAttributes() - 1; i++) {
 			int instAttIndex = modelAttIndexToInstanceAttIndex(i, inst);
 			AttributeClassObserver obs = this.attributeObservers.get(i);
 			if (obs == null) {
-				obs = inst.attribute(instAttIndex).isNominal() ?
-					newNominalClassObserver() : newNumericClassObserver();
+				obs = inst.attribute(instAttIndex).isNominal() ? newNominalClassObserver()
+						: newNumericClassObserver();
 				this.attributeObservers.set(i, obs);
 			}
-			obs.observeAttributeClass(inst.value(instAttIndex), (int) inst
-					.classValue(), inst.weight());
+			obs.observeAttributeClass(inst.value(instAttIndex),
+					(int) inst.classValue(), inst.weight());
 		}
-		if (this.trainingWeightSeenByModel - this.weightSeenAtLastSplit >=
-				this.gracePeriodOption.getValue()) {
-			this.bestSplit = findBestSplit((SplitCriterion)
-				getPreparedClassOption(this.splitCriterionOption));
+		if (this.trainingWeightSeenByModel - this.weightSeenAtLastSplit >= this.gracePeriodOption
+				.getValue()) {
+			this.bestSplit = findBestSplit((SplitCriterion) getPreparedClassOption(this.splitCriterionOption));
 			this.weightSeenAtLastSplit = this.trainingWeightSeenByModel;
 		}
 	}
@@ -91,12 +90,10 @@ public class TestingNameChange extends AbstractClassifier {
 		for (int i = 0; i < this.attributeObservers.size(); i++) {
 			AttributeClassObserver obs = this.attributeObservers.get(i);
 			if (obs != null) {
-				AttributeSplitSuggestion suggestion =
-					obs.getBestEvaluatedSplitSuggestion(
-						criterion,
-						preSplitDist,
-						i,
-						this.binarySplitsOption.isSet());
+				AttributeSplitSuggestion suggestion = obs
+						.getBestEvaluatedSplitSuggestion(criterion,
+								preSplitDist, i,
+								this.binarySplitsOption.isSet());
 				if (suggestion.merit > bestMerit) {
 					bestMerit = suggestion.merit;
 					bestFound = suggestion;
