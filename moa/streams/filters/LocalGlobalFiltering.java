@@ -16,12 +16,7 @@ import weka.core.Instances;
 import moa.streams.InstanceStream;
 
 public class LocalGlobalFiltering extends AbstractStreamFilter {
-	
-	@Override
-    public InstancesHeader getHeader() {
-        return this.inputStream.getHeader();
-    }
-	
+		
 	@Override
 	public String getPurposeString() {
 		return "Accurately identify and remove mislabeled data for more accurate models.";
@@ -62,7 +57,27 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 	protected int nLocalFolds;
 	protected int nHeterogeneousClassifiers;
 	
-	protected InstanceStream inputStream;
+	protected InstanceStream instanceStream;
+	
+	@Override
+    public InstancesHeader getHeader() {
+        return null;//this.inputStream.getHeader();
+    }
+	
+
+	@Override
+	public long estimatedRemainingInstances() {
+		/* TODO: this is only a temporary fix */
+		return this.instanceStream.estimatedRemainingInstances();
+	}
+	
+	@Override
+	public boolean hasMoreInstances() {
+		/* TODO: this is only a temporary fix, final version will need to be
+		 * this.instanceStream.hasMoreInstances() || ![instanceoutputqueue].isEmpty()
+		 */
+		return this.instanceStream.hasMoreInstances();
+	}
 
 	@Override
 	public void prepareForUseImpl(TaskMonitor monitor,
@@ -75,19 +90,21 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 		this.nHeterogeneousClassifiers = nHeterogeneousClassifiersLocalOption
 				.getValue();
 
-		//super.prepareForUse(monitor, repository);
+		// Shamelessly stolen from moa.streams.FilteredStream
+		this.instanceStream = (InstanceStream) getPreparedClassOption(this.streamOption);
 	}
 
 	// GIT TEST
 
 	@Override
 	public Instance nextInstance() {
-
-		for (int i = 0; i < chunkSize; i++) {
-			System.out.println(this.inputStream.nextInstance());
-		}
-
-		return null;
+		// TODO FINISH THIS
+		//return this.instanceStream.nextInstance();
+		
+		// 1. Collect data from S and form a chunk Si with N instances
+		// TODO Instances(java.lang.String name, java.util.ArrayList<Attribute> attInfo, int capacity)
+        //Creates an empty set of instances.
+		return this.instanceStream.nextInstance();
 	}
 
 	private void processChunk(Instances instances) {
