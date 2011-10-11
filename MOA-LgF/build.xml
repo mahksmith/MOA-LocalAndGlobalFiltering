@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<project name="MOA" default="main" basedir=".">
+	<!-- Sets variables which can later be used. -->
+	<!-- The value of a property is accessed via ${} -->
+	<property name="src.dir" location="src" />
+	<property name="lib.dir" location="libs" />
+	<property name="build.dir" location="build" />
+	<property name="dist.dir" location="dist" />
+	
+	<!-- Create a classpath container which can later be used in the ant task -->
+	<path id="build.classpath">
+		<fileset dir="${lib.dir}">
+			<include name="*.jar" />
+		</fileset>
+	</path>
+	
+	<!-- Deletes the existing build and dist directory -->
+	<target name="clean">
+		<delete dir="${build.dir}" />
+		<delete dir="${dist.dir}" />
+	</target>
+	
+	<!-- Creates the build and dist directory -->
+	<target name="makedir">
+		<mkdir dir="${build.dir}" />
+		<mkdir dir="${dist.dir}" />
+	</target>
+	
+	<!-- Compile my java code -->
+	<target name="compile" depends="clean, makedir">
+		<javac srcdir="${src.dir}" destdir="${build.dir}" classpathref="build.classpath" >
+		</javac>
+	</target>
+	
+	<!-- Creates the deployable jar file -->
+	<target name="jar" depends="compile">
+		<jar destfile="${dist.dir}\MOA-with-LgF.jar" basedir="${build.dir}">
+			<zipgroupfileset dir="${lib.dir}" includes="*.jar"/>
+			<manifest>
+				<attribute name="Main-Class" value="moa.gui.GUI" />
+			</manifest>
+		</jar>
+	</target>
+	
+	<target name="main" depends="compile, jar">
+		<description>Main target</description>
+	</target>
+	
+</project>
