@@ -4,6 +4,11 @@
 
 package moa.streams.filters;
 
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.Queue;
+
+import moa.classifiers.Classifier;
 import moa.core.InstancesHeader;
 import moa.core.ObjectRepository;
 import moa.options.ClassOption;
@@ -30,8 +35,13 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 			"Stream to filter.", InstanceStream.class,
 			"generators.RandomTreeGenerator");
 	
+	// I know that there is a learner setting, but not sure how to grab it. This will do for now.
+	public ClassOption learnerOption = new ClassOption("classifier", 'c',
+			"Classifier used.", Classifier.class,
+			"moa.classifiers.NaiveBayes");
+	
 	public IntOption chunkSizeOption = new IntOption("chunkSize", 'N',
-			"Set the size of each chunk.", 20);
+			"Set the size of each chunk.", 25);
 
 	public FloatOption removalAlphaOption = new FloatOption("removalAlpha",
 			'a', "The percentage of instances to remove from the stream.", 0.1,
@@ -49,7 +59,11 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 			"Number of heterogeoneous classifiers built for local filtering.",
 			10);
 
-	private Instances instances;
+	private Instances currentChunk;
+	protected Classifier classifier;
+	protected Classifier[] ensemble;
+
+	private Queue<Instance> instanceReturn = new LinkedList<Instance>();
 
 	protected int chunkSize;
 	protected float removalAlpha;
@@ -67,48 +81,108 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 
 	@Override
 	public long estimatedRemainingInstances() {
-		/* TODO: this is only a temporary fix */
-		return this.instanceStream.estimatedRemainingInstances();
+		return this.instanceStream.estimatedRemainingInstances() + instanceReturn.size();
 	}
 	
 	@Override
 	public boolean hasMoreInstances() {
-		/* TODO: this is only a temporary fix, final version will need to be
-		 * this.instanceStream.hasMoreInstances() || ![instanceoutputqueue].isEmpty()
-		 */
-		return this.instanceStream.hasMoreInstances();
+		return this.instanceStream.hasMoreInstances() || !instanceReturn.isEmpty();
 	}
 
 	@Override
-	public void prepareForUseImpl(TaskMonitor monitor,
-			ObjectRepository repository) {
+	public void prepareForUseImpl(TaskMonitor monitor, ObjectRepository repository) {
 		this.chunkSize = chunkSizeOption.getValue();
-		this.removalAlpha = (float) removalAlphaOption.getValue(); // Perhaps a
-																	// bug???
+		this.removalAlpha = (float) removalAlphaOption.getValue(); 
 		this.nGlobalClassifiers = nClassifiersGlobalFilteringOption.getValue();
 		this.nLocalFolds = nFoldsLocalFilterOption.getValue();
-		this.nHeterogeneousClassifiers = nHeterogeneousClassifiersLocalOption
-				.getValue();
+		this.nHeterogeneousClassifiers = nHeterogeneousClassifiersLocalOption.getValue();
 
-		// Shamelessly stolen from moa.streams.FilteredStream
+		this.classifier = (Classifier) getPreparedClassOption(this.learnerOption);
 		this.instanceStream = (InstanceStream) getPreparedClassOption(this.streamOption);
+		
+		super.prepareForUseImpl(monitor, repository);
 	}
 
 	// GIT TEST
 
 	@Override
 	public Instance nextInstance() {
-		// TODO FINISH THIS
-		//return this.instanceStream.nextInstance();
 		
 		// 1. Collect data from S and form a chunk Si with N instances
-		// TODO Instances(java.lang.String name, java.util.ArrayList<Attribute> attInfo, int capacity)
-        //Creates an empty set of instances.
-		return this.instanceStream.nextInstance();
+		
+		this.initVariables();
+		
+		if (currentChunk.size() < chunkSize) {
+			currentChunk.add(instanceStream.nextInstance());
+		}
+		
+		this.currentChunk.add(this.instanceStream.nextInstance());
+		
+		if (this.currentChunk.size() == chunkSize)
+			processChunk();
+		
+		if (instanceReturn.isEmpty())
+			return null;
+		else 
+			return instanceReturn.poll();
+	}
+	
+	private void initVariables() {
+		if (this.currentChunk == null) {
+			this.currentChunk = new Instances(instanceStream.getHeader());
+		}
 	}
 
-	private void processChunk(Instances instances) {
+	private void processChunk() {
+		// 2. Build classifier Ci from Si
+		// TODO Not sure if this is right...
+		for (int i = 0; i < chunkSize; i++) {
+			this.classifier.trainOnInstance(currentChunk.get(i));
+		}
+		
+		// 3. Produce local ranking list.
+		produceLocalRankingList();
+		
+		
+		
+		
+		
+		
+		
+		
+		this.currentChunk = null;
+		this.classifier = (Classifier) getPreparedClassOption(this.learnerOption);
+		this.classifier.resetLearning();
 
+	}
+	
+	private void produceLocalRankingList() {
+		// Each datachunk is split into n-folds F1, F2, .., Fn
+		Instances copy = new Instances(currentChunk);
+		Instances[] folds = new Instances[this.nLocalFolds];
+		
+		int n = this.currentChunk.size() % this.nLocalFolds;
+		int fl = this.currentChunk.size() / this.nLocalFolds;
+		for (int f = 0; f < folds.length; f++) {
+			if (folds[f] == null) {
+				folds[f] = new Instances(instanceStream.getHeader());
+			}
+			
+			// put fl instances in to start with
+			for (int x = 0; x < fl; x++)
+				folds[f].add(copy.remove(0));
+			
+			// and put another one in if the folds will be uneven
+			if (n != 0 && f < n)
+				folds[f].add(copy.remove(0));
+		}
+		
+		// For each fold Fj, Γ classifiers are trained from Fj's complement set where
+		// each of the Γ classifiers is trained by using different types of learners
+//		int numberOfClassifiers = Classifier.class. // TODO
+//		for (int f = 0; f < folds.length; f++) {
+//			
+//		}
 	}
 
 	@Override
