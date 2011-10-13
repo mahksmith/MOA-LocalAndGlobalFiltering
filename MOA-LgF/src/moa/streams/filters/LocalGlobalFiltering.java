@@ -5,8 +5,11 @@
 package moa.streams.filters;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Hashtable;
 import java.util.LinkedList;
 import java.util.Queue;
+import java.util.Random;
 
 import moa.classifiers.Classifier;
 import moa.core.InstancesHeader;
@@ -54,10 +57,10 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 	public IntOption nFoldsLocalFilterOption = new IntOption(
 			"nFoldsLocalFilter", 'n', "Number of folds for local filtering.", 5);
 
-	public IntOption nHeterogeneousClassifiersLocalOption = new IntOption(
+	public IntOption nClassifiersLocalOption = new IntOption(
 			"nHeterogeneousClassifiers", 'g',
 			"Number of heterogeoneous classifiers built for local filtering.",
-			10);
+			4, 1, 4);
 
 	private Instances currentChunk;
 	protected Classifier classifier;
@@ -69,7 +72,7 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 	protected float removalAlpha;
 	protected int nGlobalClassifiers;
 	protected int nLocalFolds;
-	protected int nHeterogeneousClassifiers;
+	protected int nLocalClassifiers;
 	
 	protected InstanceStream instanceStream;
 	
@@ -95,19 +98,18 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 		this.removalAlpha = (float) removalAlphaOption.getValue(); 
 		this.nGlobalClassifiers = nClassifiersGlobalFilteringOption.getValue();
 		this.nLocalFolds = nFoldsLocalFilterOption.getValue();
-		this.nHeterogeneousClassifiers = nHeterogeneousClassifiersLocalOption.getValue();
+		this.nLocalClassifiers = nClassifiersLocalOption.getValue();
 
 		this.classifier = (Classifier) getPreparedClassOption(this.learnerOption);
 		this.instanceStream = (InstanceStream) getPreparedClassOption(this.streamOption);
 		
-		super.prepareForUseImpl(monitor, repository);
+		//super.prepareForUseImpl(monitor, repository);
 	}
 
 	// GIT TEST
 
 	@Override
 	public Instance nextInstance() {
-		
 		// 1. Collect data from S and form a chunk Si with N instances
 		
 		this.initVariables();
@@ -115,8 +117,6 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 		if (currentChunk.size() < chunkSize) {
 			currentChunk.add(instanceStream.nextInstance());
 		}
-		
-		this.currentChunk.add(this.instanceStream.nextInstance());
 		
 		if (this.currentChunk.size() == chunkSize)
 			processChunk();
@@ -134,6 +134,7 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 	}
 
 	private void processChunk() {
+		System.out.println("Processing chunk.");
 		// 2. Build classifier Ci from Si
 		// TODO Not sure if this is right...
 		for (int i = 0; i < chunkSize; i++) {
@@ -142,11 +143,6 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 		
 		// 3. Produce local ranking list.
 		produceLocalRankingList();
-		
-		
-		
-		
-		
 		
 		
 		
@@ -178,12 +174,117 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 		}
 		
 		// For each fold Fj, Γ classifiers are trained from Fj's complement set where
-		// each of the Γ classifiers is trained by using different types of learners
-//		int numberOfClassifiers = Classifier.class. // TODO
-//		for (int f = 0; f < folds.length; f++) {
-//			
-//		}
+		// each of the Γ classifiers is trained by using different types of learners.	
+		Classifier[][] foldClassifiers = new Classifier[folds.length][this.nLocalClassifiers];
+		for (int j = 0; j < folds.length; j++) {
+			foldClassifiers[j] = trainLocalClassifier(j, folds);
+			
+			int foldSize = folds[j].size();
+		
+			// For each instance x in Fj, the Γ classifiers are applied to calculate a score
+			double[] instanceScores = new double[foldSize];
+			for (int inst = 0; inst < foldSize; inst++) {
+				instanceScores[inst] = getInstanceScores(folds[j].get(inst), foldClassifiers[j]);
+			}			
+		}
 	}
+
+	private double getInstanceScores(Instance inst, Classifier[] classifiers) {
+		int[] classFrequencies = new int[inst.numClasses()];
+		Arrays.fill(classFrequencies, 0);
+		
+		
+		double[][] classPredictions = new double[classifiers.length][];
+		for (int c = 0; c < classifiers.length; c++) { 
+			classPredictions[c] = classifiers[c].getVotesForInstance(inst);
+			// This comes in the form [6.0, 14.0], I'm assuming that the higher number is the class predicted.
+		}
+		
+		// Iterate over each prediction, find the highest class probability and
+		//bung that into the ArrayList, adding a number if one is already there.
+		for (int c = 0; c < classPredictions.length; c++) {
+			
+			
+			int highestClass = Integer.MIN_VALUE;
+			double highestSoFar = Double.MIN_VALUE;			
+			for (int p = 0; p < classPredictions[c].length; p++) {
+				if (classPredictions[c][p] > highestSoFar) {
+					highestSoFar = classPredictions[c][p];
+					highestClass = p;
+				}
+			}			
+			classFrequencies[highestClass] += 1;
+		}
+		
+		// Now we have an array with the prediction sums, find the highest again to find
+		// c: the class mostly agreed by all gamma classifiers.
+		int c = 0;
+		int highestFrequency = 0;
+		for (int i = 0; i < classFrequencies.length; i++) {
+			if (classFrequencies[i] > highestFrequency) {
+				c = i;
+				highestFrequency = classFrequencies[i];
+			}
+		}
+		
+		System.out.println("Highest class = " + c);
+		return 0;
+				
+	}
+
+
+	private Classifier[] trainLocalClassifier(int currentFold, Instances[] allFolds) {
+		//Γ classifiers are trained from Fj's complement set where
+		// each of the Γ classifiers is trained by using different types of learners
+		Classifier[] clsArray = new Classifier[this.nLocalClassifiers];
+		for (int g = 0; g < this.nLocalClassifiers; g++) {
+			Classifier cls = getClassifier(g);
+			
+			for (int cs = 0; cs < allFolds.length; cs++) // Train from Fj's complement set
+				if (cs != currentFold)
+					trainOnInstances(cls, allFolds[cs]);
+			
+			clsArray[g] = cls;
+		}		
+		return clsArray;
+	}
+
+
+	private void trainOnInstances(Classifier cls, Instances instances) {
+		for (Instance inst : instances) {
+			cls.prepareForUse();
+			cls.trainOnInstance(inst);
+		}
+	}
+
+
+	/**
+	 * I'm not sure if this is the best way to get different types of learners, opinion?
+	 * @return
+	 * @throws Exception 
+	 */
+	private Classifier getClassifier(int n) {
+		//Random random = new Random();
+		// TODO: implement more, if this works ok.
+		//int n = random.nextInt(5);
+		
+		if (n > 4) {
+			System.err.println("Breaking, incorrent integer given. Developer is stupid.");
+			System.exit(-1);
+		}
+		
+		// Can't use OzaBoost(), it generates nothing for problems with more than two classes
+		// HoeffdingTree, MajorityClass and DecisionStump seem to give the same answers...
+		switch(n) {
+			case 0: return new moa.classifiers.NaiveBayes();
+			case 1: return new moa.classifiers.HoeffdingTree();
+			case 2: return new moa.classifiers.AdaHoeffdingOptionTree();
+			case 3: return new moa.classifiers.HoeffdingAdaptiveTree();
+		}
+		
+		return null;
+	}
+		
 
 	@Override
 	public void getDescription(StringBuilder arg0, int arg1) {
@@ -194,5 +295,7 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 	protected void restartImpl() {
 		// TODO Auto-generated method stub
 	}
+	
+	
 
 }
