@@ -63,10 +63,12 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 			4, 1, 4);
 
 	private Instances currentChunk;
-	protected Classifier classifier;
+	protected Classifier currentClassifier;
 	protected Classifier[] ensemble;
 
+	private Queue<Classifier> globalClassifiers;
 	private Queue<Instance> instanceReturn = new LinkedList<Instance>();
+	
 
 	protected int chunkSize;
 	protected float removalAlpha;
@@ -100,9 +102,10 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 		this.nLocalFolds = nFoldsLocalFilterOption.getValue();
 		this.nLocalClassifiers = nClassifiersLocalOption.getValue();
 
-		this.classifier = (Classifier) getPreparedClassOption(this.learnerOption);
+		this.currentClassifier = (Classifier) getPreparedClassOption(this.learnerOption);
 		this.instanceStream = (InstanceStream) getPreparedClassOption(this.streamOption);
 		
+		this.globalClassifiers = new LinkedList<Classifier>();
 		//super.prepareForUseImpl(monitor, repository);
 	}
 
@@ -115,6 +118,7 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 		this.initVariables();
 		
 		if (currentChunk.size() < chunkSize) {
+			Instance i = instanceStream.nextInstance();
 			currentChunk.add(instanceStream.nextInstance());
 		}
 		
@@ -138,21 +142,32 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 		// 2. Build classifier Ci from Si
 		// TODO Not sure if this is right...
 		for (int i = 0; i < chunkSize; i++) {
-			this.classifier.trainOnInstance(currentChunk.get(i));
+			this.currentClassifier.trainOnInstance(currentChunk.get(i));
 		}
 		
 		// 3. Produce local ranking list.
-		produceLocalRankingList();
+		double[] localScoreList = produceLocalRankingScores();
+		
+		// 4. Produce global ranking list.
+//		double[] globalScoreList = produceGlobalRankingScores();
 		
 		
 		
 		this.currentChunk = null;
-		this.classifier = (Classifier) getPreparedClassOption(this.learnerOption);
-		this.classifier.resetLearning();
+		this.currentClassifier = (Classifier) getPreparedClassOption(this.learnerOption);
+		this.currentClassifier.resetLearning();
 
 	}
 	
-	private void produceLocalRankingList() {
+//	private double[] produceGlobalRankingScores() {
+//		// TODO This method can probably use chunks of code from produceLocalRanking
+//		for (int i = 0; i < currentChunk.size(); i++) {		// For each instance...
+//			
+//		}
+//	}
+
+
+	private double[] produceLocalRankingScores() {
 		// Each datachunk is split into n-folds F1, F2, .., Fn
 		Instances copy = new Instances(currentChunk);
 		Instances[] folds = new Instances[this.nLocalFolds];
@@ -176,6 +191,8 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 		// For each fold Fj, Γ classifiers are trained from Fj's complement set where
 		// each of the Γ classifiers is trained by using different types of learners.	
 		Classifier[][] foldClassifiers = new Classifier[folds.length][this.nLocalClassifiers];
+		double[] allInstanceScores = new double[this.currentChunk.size()];
+		int currentInst = 0;
 		for (int j = 0; j < folds.length; j++) {
 			foldClassifiers[j] = trainLocalClassifier(j, folds);
 			
@@ -185,14 +202,48 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 			double[] instanceScores = new double[foldSize];
 			for (int inst = 0; inst < foldSize; inst++) {
 				instanceScores[inst] = getInstanceScores(folds[j].get(inst), foldClassifiers[j]);
-			}			
+			}
+			
+			// At this point, the scores are stored in a double[] the same size as the fold
+			// After doing this next bit, the instances are still in order i placed them into folds, so I can do this.
+			for (int i = 0; i < instanceScores.length; i++) {
+				allInstanceScores[currentInst] = instanceScores[i];
+				currentInst++;
+			}
+		}		
+		// Now, I'm going to sort both the currentChunk and the full scores list, and return the scores.
+		sort(allInstanceScores, currentChunk);
+		
+		return allInstanceScores;
+		
+		
+	}
+
+	private void sort(double[] scores, Instances chunk) {
+		// I had to implement selection sort, to make use of the Instances.swap(int i, int j) method
+		int pos, min;
+		int n = scores.length;
+		for (pos = 0; pos < n; pos++) {
+			min = pos;
+			for (int i = pos+1; i < n; i++) {
+				if (scores[i] < scores[min]) {
+					min = i;
+				}
+			}
+			if (min != pos) {
+				// do the swapping
+				chunk.swap(pos, min);
+				double temp = scores[min];
+				scores[min] = scores[pos];
+				scores[pos] = temp;
+			}
 		}
 	}
 
+
 	private double getInstanceScores(Instance inst, Classifier[] classifiers) {
 		int[] classFrequencies = new int[inst.numClasses()];
-		Arrays.fill(classFrequencies, 0);
-		
+		Arrays.fill(classFrequencies, 0);		
 		
 		double[][] classPredictions = new double[classifiers.length][];
 		for (int c = 0; c < classifiers.length; c++) { 
@@ -203,8 +254,7 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 		// Iterate over each prediction, find the highest class probability and
 		//bung that into the ArrayList, adding a number if one is already there.
 		for (int c = 0; c < classPredictions.length; c++) {
-			
-			
+						
 			int highestClass = Integer.MIN_VALUE;
 			double highestSoFar = Double.MIN_VALUE;			
 			for (int p = 0; p < classPredictions[c].length; p++) {
@@ -227,9 +277,22 @@ public class LocalGlobalFiltering extends AbstractStreamFilter {
 			}
 		}
 		
-		System.out.println("Highest class = " + c);
-		return 0;
+		// ,... and Ic(x) is an indicator function which takes 1 if c is the same as x's class label
+		// and -1 otherwise.
+		
+		int iCx = getICXIndicator(inst, c);		
+		double oneOverGamma = 1.0 / this.nLocalClassifiers;		
+		double score = iCx * oneOverGamma * highestFrequency;		
+		return score;
 				
+	}
+
+
+	private int getICXIndicator(Instance inst, double c) {
+		if (inst.classValue() == c)
+			return 1;
+		else
+			return -1;
 	}
 
 
